@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from nemo_fabric_adapter_contract.models import AgentConfig
@@ -545,6 +546,51 @@ async def test_unusable_session_root_falls_back_to_the_request_root(
     assert (
         "nemo_fabric_session_root" not in mock_relay["request_scopes"][0][2]["metadata"]
     )
+
+
+@pytest.mark.parametrize("provider_fails", [False, True], ids=["success", "failure"])
+def test_model_call_records_relay_status(mock_mini, nemo_relay, provider_fails):
+    failure = RuntimeError("synthetic provider failure")
+    if provider_fails:
+        mock_mini["model"].query.side_effect = failure
+    agent = RelayRetainingDefaultAgent(
+        mock_mini["model"],
+        mock_mini["environment_factory"].return_value,
+        relay_model_name="nvidia/test-model",
+        system_template="",
+        instance_template="{{task}}",
+    )
+    events = []
+    subscriber_name = f"mini-model-status-{uuid4()}"
+    nemo_relay.subscribers.register(subscriber_name, events.append)
+    try:
+        agent.begin_relay_invocation(nemo_relay.scope.get_handle())
+        if provider_fails:
+            with pytest.raises(RuntimeError) as caught:
+                agent.query()
+            assert caught.value is failure
+        else:
+            assert agent.query()["content"] == "Working."
+        nemo_relay.subscribers.flush()
+        ends = [
+            event
+            for event in events
+            if isinstance(event, nemo_relay.ScopeEvent)
+            and event.name == "mini-swe-agent.model"
+            and event.category == "llm"
+            and event.scope_category == "end"
+        ]
+        assert len(ends) == 1
+        assert ends[0].metadata["otel.status_code"] == (
+            "ERROR" if provider_fails else "OK"
+        )
+        if provider_fails:
+            assert ends[0].metadata["error.type"] == "RuntimeError"
+        else:
+            assert "error.type" not in ends[0].metadata
+        assert agent.end_relay_invocation() == []
+    finally:
+        nemo_relay.subscribers.deregister(subscriber_name)
 
 
 async def test_relay_event_failure_degrades_telemetry_without_failing_agent(

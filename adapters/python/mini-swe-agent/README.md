@@ -176,6 +176,10 @@ subclass explicitly emits nested step, LLM, and `bash` tool events using Relay
 handles. This produces a correlated Agent, Function, LLM, and tool scope
 hierarchy without requiring upstream changes.
 
+Failed model queries emit Relay LLM end events with `otel.status_code=ERROR`
+and the exception class in `error.type`. The original exception still propagates
+to the caller.
+
 ### Correlation IDs
 
 The top-level `mini-swe-agent.request` Agent scope stores the NeMo Fabric

@@ -193,7 +193,12 @@ class RelayRetainingDefaultAgent(RetainingDefaultAgent):
             return message
         except Exception as error:
             response = _relay_exception_response(error)
-            metadata = {"status": "error", "error_type": type(error).__name__}
+            metadata = {
+                "status": "error",
+                "error_type": type(error).__name__,
+                "otel.status_code": "ERROR",
+                "error.type": type(error).__name__,
+            }
             raise
         finally:
             try:
